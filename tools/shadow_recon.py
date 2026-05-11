@@ -1,0 +1,962 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 PenTestToolkit
+# SPDX-License-Identifier: MIT
+"""
+ShadowRecon - Comprehensive Reconnaissance Tool
+Author: Security Research Team
+Version: 1.0.0
+
+A multi-threaded reconnaissance tool for subdomain enumeration,
+port scanning, and technology detection.
+"""
+
+import argparse
+import socket
+import json
+import time
+import sys
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import Dict, List, Set, Tuple, Optional
+import requests
+import dns.resolver
+import dns.exception
+
+from common import Colors, make_session, add_proxy_arg
+
+# Suppress SSL warnings
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Constants
+VERSION = "1.0.0"
+DEFAULT_THREADS = 50
+DEFAULT_TIMEOUT = 3
+PORT_SCAN_TIMEOUT = 2
+TOP_PORTS = [
+    80, 443, 21, 22, 25, 53, 110, 143, 161, 162, 389, 443, 445, 636, 993, 995,
+    1433, 1521, 3306, 3389, 5432, 5900, 5985, 5986, 6379, 7001, 8000, 8008, 8080,
+    8443, 9000, 9200, 27017, 27018, 27019, 5000, 5001, 5601, 5672, 6379, 6443,
+    8009, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090, 8091, 8092,
+    8093, 8094, 8095, 8096, 8097, 8098, 8099, 8100, 8444, 8445, 8888, 9090, 9091,
+    9092, 9093, 9200, 9300, 9418, 9999, 10000, 10001, 11211, 15672, 27015, 27016,
+    28015, 29015, 10250, 10255, 16443, 3000, 3128, 4000, 4443, 4567, 4712, 4848,
+    5000, 5111, 5222, 5269, 5280, 5432, 5555, 5671, 5800, 5901, 5984, 6066, 6666,
+    7000, 7002, 7547, 7777, 8001, 8002, 8006, 8010, 8020, 8030, 8040, 8050, 8060,
+    8070, 8090, 8181, 8333, 8334, 8500, 8530, 8880, 8883, 8983, 9001, 9002, 9003,
+    9042, 9043, 9050, 9060, 9080, 9100, 9110, 9200, 9300, 9418, 9990, 9999, 10000,
+    10080, 10250, 10255, 10443, 10500, 10809, 11000, 11111, 11333, 12000, 12345,
+    13306, 16010, 16030, 16443, 18091, 18092, 19150, 1935, 19888, 20000, 20720,
+    20828, 20921, 21115, 22222, 23424, 27000, 28015, 29015, 32768, 33333, 34571,
+    34572, 34573, 40193, 4848, 50000, 50030, 50060, 50070, 50075, 50090, 54311,
+    60010, 60030, 63342, 64111, 64680, 65000, 70000, 80010, 8139, 8140, 8192, 8193,
+    8194, 9000, 9043, 9080, 9091, 9092, 9100, 9200, 9300, 9443, 9871, 9943, 9944,
+    9998, 9999, 10000, 1080, 1088, 1099, 1100, 1111, 11211, 1133, 1158, 1194,
+    1199, 1210, 1214, 1234, 1311, 1352, 1354, 1372, 1414, 1415, 1433, 1434, 1521,
+    1524, 1525, 1526, 1600, 1645, 1646, 1701, 1717, 1720, 1723, 1755, 1761, 1762,
+    1801, 1812, 1813, 1883, 1900, 1984, 1993, 1998, 2000, 2001, 2002, 2003, 2004,
+    2005, 2049, 2052, 2100, 2103, 2105, 2107, 2121, 2161, 2233, 2280, 2301, 2303,
+    2345, 2366, 2381, 2401, 2468, 2483, 2492, 2500, 2583, 2589, 2598, 2601, 2602,
+    2604, 2628, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3031,
+    3050, 3052, 3071, 3077, 3260, 3268, 3269, 3270, 3300, 3301, 3306, 3322, 3323,
+    3324, 3325, 3351, 3367, 3369, 3370, 3371, 3372, 3389, 3390, 3510, 3511, 3512,
+    3513, 3514, 3515, 3516, 3517, 3518, 3519, 3520, 3521, 3522, 3523, 3524, 3525,
+    3526, 3527, 3528, 3529, 3530, 3531, 3541, 3542, 3543, 3544, 3545, 3546, 3547,
+    3548, 3549, 3550, 3551, 3552, 3553, 3554, 3555, 3556, 3557, 3558, 3559, 3560,
+    3561, 3562, 3563, 3564, 3565, 3566, 3567, 3568, 3569, 3570, 3571, 3572, 3573,
+    3574, 3575, 3576, 3577, 3578, 3579, 3580, 3581, 3582, 3583, 3584, 3585, 3586,
+    3587, 3588, 3589, 3590, 3591, 3592, 3593, 3594, 3595, 3596, 3597, 3598, 3599,
+    3600, 3628, 3632, 3633, 3634, 3635, 3636, 3637, 3638, 3639, 3640, 3641, 3642,
+    3643, 3644, 3645, 3646, 3647, 3648, 3649, 3650, 3651, 3652, 3653, 3654, 3655,
+    3656, 3657, 3658, 3659, 3660, 3661, 3662, 3663, 3664, 3665, 3666, 3667, 3668,
+    3669, 3670, 3671, 3672, 3673, 3674, 3675, 3676, 3677, 3678, 3679, 3680, 3681,
+    3682, 3683, 3684, 3685, 3686, 3687, 3688, 3689, 3690, 3691, 3692, 3693, 3694,
+    3695, 3696, 3697, 3698, 3699, 3700, 3701, 3702, 3703, 3704, 3705, 3706, 3707,
+    3708, 3709, 3710, 3711, 3712, 3713, 3714, 3715, 3716, 3717, 3718, 3719, 3720,
+    3721, 3722, 3723, 3724, 3725, 3726, 3727, 3728, 3729, 3730, 3731, 3732, 3733,
+    3734, 3735, 3736, 3737, 3738, 3739, 3740, 3741, 3742, 3743, 3744, 3745, 3746,
+    3747, 3748, 3749, 3750, 3751, 3752, 3753, 3754, 3755, 3756, 3757, 3758, 3759,
+    3760, 3761, 3762, 3763, 3764, 3765, 3766, 3767, 3768, 3769, 3770, 3771, 3772,
+    3773, 3774, 3775, 3776, 3777, 3778, 3779, 3780, 3781, 3782, 3783, 3784, 3785,
+    3786, 3787, 3788, 3789, 3790, 3791, 3792, 3793, 3794, 3795, 3796, 3797, 3798,
+    3799, 3800, 3801, 3802, 3803, 3804, 3805, 3806, 3807, 3808, 3809, 3810, 3811,
+    3812, 3813, 3814, 3815, 3816, 3817, 3818, 3819, 3820, 3821, 3822, 3823, 3824,
+    3825, 3826, 3827, 3828, 3829, 3830, 3831, 3832, 3833, 3834, 3835, 3836, 3837,
+    3838, 3839, 3840, 3841, 3842, 3843, 3844, 3845, 3846, 3847, 3848, 3849, 3850,
+    3851, 3852, 3853, 3854, 3855, 3856, 3857, 3858, 3859, 3860, 3861, 3862, 3863,
+    3864, 3865, 3866, 3867, 3868, 3869, 3870, 3871, 3872, 3873, 3874, 3875, 3876,
+    3877, 3878, 3879, 3880, 3881, 3882, 3883, 3884, 3885, 3886, 3887, 3888, 3889,
+    3890, 3891, 3892, 3893, 3894, 3895, 3896, 3897, 3898, 3899, 3900, 3901, 3902,
+    3903, 3904, 3905, 3906, 3907, 3908, 3909, 3910, 3911, 3912, 3913, 3914, 3915,
+    3916, 3917, 3918, 3919, 3920, 3921, 3922, 3923, 3924, 3925, 3926, 3927, 3928,
+    3929, 3930, 3931, 3932, 3933, 3934, 3935, 3936, 3937, 3938, 3939, 3940, 3941,
+    3942, 3943, 3944, 3945, 3946, 3947, 3948, 3949, 3950, 3951, 3952, 3953, 3954,
+    3955, 3956, 3957, 3958, 3959, 3960, 3961, 3962, 3963, 3964, 3965, 3966, 3967,
+    3968, 3969, 3970, 3971, 3972, 3973, 3974, 3975, 3976, 3977, 3978, 3979, 3980,
+    3981, 3982, 3983, 3984, 3985, 3986, 3987, 3988, 3989, 3990, 3991, 3992, 3993,
+    3994, 3995, 3996, 3997, 3998, 3999, 4000, 4001, 4002, 4003, 4004, 4005, 4006,
+    4007, 4008, 4009, 4010, 4011, 4012, 4013, 4014, 4015, 4016, 4017, 4018, 4019,
+    4020, 4021, 4022, 4023, 4024, 4025, 4026, 4027, 4028, 4029, 4030, 4031, 4032,
+    4033, 4034, 4035, 4036, 4037, 4038, 4039, 4040, 4041, 4042, 4043, 4044, 4045,
+    4046, 4047, 4048, 4049, 4050, 4051, 4052, 4053, 4054, 4055, 4056, 4057, 4058,
+    4059, 4060, 4061, 4062, 4063, 4064, 4065, 4066, 4067, 4068, 4069, 4070, 4071,
+    4072, 4073, 4074, 4075, 4076, 4077, 4078, 4079, 4080, 4081, 4082, 4083, 4084,
+    4085, 4086, 4087, 4088, 4089, 4090, 4091, 4092, 4093, 4094, 4095, 4096, 4242,
+    4321, 4323, 4443, 4444, 4445, 4557, 4559, 4567, 4662, 4848, 5000, 5001, 5002,
+    5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010, 5011, 5012, 5013, 5014, 5015,
+    5016, 5017, 5018, 5019, 5020, 5021, 5022, 5023, 5024, 5025, 5026, 5027, 5028,
+    5029, 5030, 5031, 5032, 5033, 5034, 5035, 5036, 5037, 5038, 5039, 5040, 5041,
+    5042, 5043, 5044, 5045, 5046, 5047, 5048, 5049, 5050, 5051, 5052, 5053, 5054,
+    5055, 5056, 5057, 5058, 5059, 5060, 5061, 5062, 5063, 5064, 5065, 5066, 5067,
+    5068, 5069, 5070, 5071, 5072, 5073, 5074, 5075, 5076, 5077, 5078, 5079, 5080,
+    5081, 5082, 5083, 5084, 5085, 5086, 5087, 5088, 5089, 5090, 5091, 5092, 5093,
+    5094, 5095, 5096, 5097, 5098, 5099, 5100, 5101, 5102, 5103, 5104, 5105, 5106,
+    5107, 5108, 5109, 5110, 5111, 5112, 5113, 5114, 5115, 5116, 5117, 5118, 5119,
+    5120, 5121, 5122, 5123, 5124, 5125, 5126, 5127, 5128, 5129, 5130, 5131, 5132,
+    5133, 5134, 5135, 5136, 5137, 5138, 5139, 5140, 5141, 5142, 5143, 5144, 5145,
+    5146, 5147, 5148, 5149, 5150, 5151, 5152, 5153, 5154, 5155, 5156, 5157, 5158,
+    5159, 5160, 5161, 5162, 5163, 5164, 5165, 5166, 5167, 5168, 5169, 5170, 5171,
+    5172, 5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180, 5181, 5182, 5183, 5184,
+    5185, 5186, 5187, 5188, 5189, 5190, 5191, 5192, 5193, 5194, 5195, 5196, 5197,
+    5198, 5199, 5200, 5201, 5202, 5203, 5204, 5205, 5206, 5207, 5208, 5209, 5210,
+    5211, 5212, 5213, 5214, 5215, 5216, 5217, 5218, 5219, 5220, 5221, 5222, 5223,
+    5224, 5225, 5226, 5227, 5228, 5229, 5230, 5231, 5232, 5233, 5234, 5235, 5236,
+    5237, 5238, 5239, 5240, 5241, 5242, 5243, 5244, 5245, 5246, 5247, 5248, 5249,
+    5250, 5251, 5252, 5253, 5254, 5255, 5256, 5257, 5258, 5259, 5260, 5261, 5262,
+    5263, 5264, 5265, 5266, 5267, 5268, 5269, 5270, 5271, 5272, 5273, 5274, 5275,
+    5276, 5277, 5278, 5279, 5280, 5281, 5282, 5283, 5284, 5285, 5286, 5287, 5288,
+    5289, 5290, 5291, 5292, 5293, 5294, 5295, 5296, 5297, 5298, 5299, 5300, 5301,
+    5302, 5303, 5304, 5305, 5306, 5307, 5308, 5309, 5310, 5311, 5312, 5313, 5314,
+    5315, 5316, 5317, 5318, 5319, 5320, 5321, 5322, 5323, 5324, 5325, 5326, 5327,
+    5328, 5329, 5330, 5331, 5332, 5333, 5334, 5335, 5336, 5337, 5338, 5339, 5340,
+    5341, 5342, 5343, 5344, 5345, 5346, 5347, 5348, 5349, 5350, 5351, 5352, 5353,
+    5354, 5355, 5356, 5357, 5358, 5359, 5360, 5361, 5362, 5363, 5364, 5365, 5366,
+    5367, 5368, 5369, 5370, 5371, 5372, 5373, 5374, 5375, 5376, 5377, 5378, 5379,
+    5380, 5381, 5382, 5383, 5384, 5385, 5386, 5387, 5388, 5389, 5390, 5391, 5392,
+    5393, 5394, 5395, 5396, 5397, 5398, 5399, 5400, 5401, 5402, 5403, 5404, 5405,
+    5406, 5407, 5408, 5409, 5410, 5411, 5412, 5413, 5414, 5415, 5416, 5417, 5418,
+    5419, 5420, 5421, 5422, 5423, 5424, 5425, 5426, 5427, 5428, 5429, 5430, 5431,
+    5432, 5433, 5434, 5435, 5436, 5437, 5438, 5439, 5440, 5441, 5442, 5443, 5444,
+    5445, 5446, 5447, 5448, 5449, 5450, 5451, 5452, 5453, 5454, 5455, 5456, 5457,
+    5458, 5459, 5460, 5461, 5462, 5463, 5464, 5465, 5466, 5467, 5468, 5469, 5470,
+    5471, 5472, 5473, 5474, 5475, 5476, 5477, 5478, 5479, 5480, 5481, 5482, 5483,
+    5484, 5485, 5486, 5487, 5488, 5489, 5490, 5491, 5492, 5493, 5494, 5495, 5496,
+    5497, 5498, 5499, 5500, 5501, 5502, 5503, 5504, 5505, 5506, 5507, 5508, 5509,
+    5510, 5511, 5512, 5513, 5514, 5515, 5516, 5517, 5518, 5519, 5520, 5521, 5522,
+    5523, 5524, 5525, 5526, 5527, 5528, 5529, 5530, 5531, 5532, 5533, 5534, 5535,
+    5536, 5537, 5538, 5539, 5540, 5541, 5542, 5543, 5544, 5545, 5546, 5547, 5548,
+    5549, 5550, 5551, 5552, 5553, 5554, 5555, 5556, 5557, 5558, 5559, 5560, 5561,
+    5562, 5563, 5564, 5565, 5566, 5567, 5568, 5569, 5570, 5571, 5572, 5573, 5574,
+    5575, 5576, 5577, 5578, 5579, 5580, 5581, 5582, 5583, 5584, 5585, 5586, 5587,
+    5588, 5589, 5590, 5591, 5592, 5593, 5594, 5595, 5596, 5597, 5598, 5599, 5600,
+    5601, 5602, 5603, 5604, 5605, 5606, 5607, 5608, 5609, 5610, 5611, 5612, 5613,
+    5614, 5615, 5616, 5617, 5618, 5619, 5620, 5621, 5622, 5623, 5624, 5625, 5626,
+    5627, 5628, 5629, 5630, 5631, 5632, 5633, 5634, 5635, 5636, 5637, 5638, 5639,
+    5640, 5641, 5642, 5643, 5644, 5645, 5646, 5647, 5648, 5649, 5650, 5651, 5652,
+    5653, 5654, 5655, 5656, 5657, 5658, 5659, 5660, 5661, 5662, 5663, 5664, 5665,
+    5666, 5667, 5668, 5669, 5670, 5671, 5672, 5673, 5674, 5675, 5676, 5677, 5678,
+    5679, 5680, 5681, 5682, 5683, 5684, 5685, 5686, 5687, 5688, 5689, 5690, 5691,
+    5692, 5693, 5694, 5695, 5696, 5697, 5698, 5699, 5700, 5701, 5702, 5703, 5704,
+    5705, 5706, 5707, 5708, 5709, 5710, 5711, 5712, 5713, 5714, 5715, 5716, 5717,
+    5718, 5719, 5720, 5721, 5722, 5723, 5724, 5725, 5726, 5727, 5728, 5729, 5730,
+    5731, 5732, 5733, 5734, 5735, 5736, 5737, 5738, 5739, 5740, 5741, 5742, 5743,
+    5744, 5745, 5746, 5747, 5748, 5749, 5750, 5751, 5752, 5753, 5754, 5755, 5756,
+    5757, 5758, 5759, 5760, 5761, 5762, 5763, 5764, 5765, 5766, 5767, 5768, 5769,
+    5770, 5771, 5772, 5773, 5774, 5775, 5776, 5777, 5778, 5779, 5780, 5781, 5782,
+    5783, 5784, 5785, 5786, 5787, 5788, 5789, 5790, 5791, 5792, 5793, 5794, 5795,
+    5796, 5797, 5798, 5799, 5800, 5801, 5802, 5803, 5804, 5805, 5806, 5807, 5808,
+    5809, 5810, 5811, 5812, 5813, 5814, 5815, 5816, 5817, 5818, 5819, 5820, 5821,
+    5822, 5823, 5824, 5825, 5826, 5827, 5828, 5829, 5830, 5831, 5832, 5833, 5834,
+    5835, 5836, 5837, 5838, 5839, 5840, 5841, 5842, 5843, 5844, 5845, 5846, 5847,
+    5848, 5849, 5850, 5851, 5852, 5853, 5854, 5855, 5856, 5857, 5858, 5859, 5860,
+    5861, 5862, 5863, 5864, 5865, 5866, 5867, 5868, 5869, 5870, 5871, 5872, 5873,
+    5874, 5875, 5876, 5877, 5878, 5879, 5880, 5881, 5882, 5883, 5884, 5885, 5886,
+    5887, 5888, 5889, 5890, 5891, 5892, 5893, 5894, 5895, 5896, 5897, 5898, 5899,
+    5900, 5901, 5902, 5903, 5904, 5905, 5906, 5907, 5908, 5909, 5910, 5911, 5912,
+    5913, 5914, 5915, 5916, 5917, 5918, 5919, 5920, 5921, 5922, 5923, 5924, 5925,
+    5926, 5927, 5928, 5929, 5930, 5931, 5932, 5933, 5934, 5935, 5936, 5937, 5938,
+    5939, 5940, 5941, 5942, 5943, 5944, 5945, 5946, 5947, 5948, 5949, 5950, 5951,
+    5952, 5953, 5954, 5955, 5956, 5957, 5958, 5959, 5960, 5961, 5962, 5963, 5964,
+    5965, 5966, 5967, 5968, 5969, 5970, 5971, 5972, 5973, 5974, 5975, 5976, 5977,
+    5978, 5979, 5980, 5981, 5982, 5983, 5984, 5985, 5986, 5987, 5988, 5989, 5990,
+    5991, 5992, 5993, 5994, 5995, 5996, 5997, 5998, 5999, 6000, 6001, 6002, 6003,
+    6004, 6005, 6006, 6007, 6008, 6009, 6010, 6011, 6012, 6013, 6014, 6015, 6016,
+    6017, 6018, 6019, 6020, 6021, 6022, 6023, 6024, 6025, 6026, 6027, 6028, 6029,
+    6030, 6031, 6032, 6033, 6034, 6035, 6036, 6037, 6038, 6039, 6040, 6041, 6042,
+    6043, 6044, 6045, 6046, 6047, 6048, 6049, 6050, 6051, 6052, 6053, 6054, 6055,
+    6056, 6057, 6058, 6059, 6060, 6061, 6062, 6063, 6064, 6065, 6066, 6067, 6068,
+    6069, 6070, 6071, 6072, 6073, 6074, 6075, 6076, 6077, 6078, 6079, 6080, 6081,
+    6082, 6083, 6084, 6085, 6086, 6087, 6088, 6089, 6090, 6091, 6092, 6093, 6094,
+    6095, 6096, 6097, 6098, 6099, 6100, 6101, 6102, 6103, 6104, 6105, 6106, 6107,
+    6108, 6109, 6110, 6111, 6112, 6113, 6114, 6115, 6116, 6117, 6118, 6119, 6120,
+    6121, 6122, 6123, 6124, 6125, 6126, 6127, 6128, 6129, 6130, 6131, 6132, 6133,
+    6134, 6135, 6136, 6137, 6138, 6139, 6140, 6141, 6142, 6143, 6144, 6145, 6146,
+    6147, 6148, 6149, 6150, 6151, 6152, 6153, 6154, 6155, 6156, 6157, 6158, 6159,
+    6160, 6161, 6162, 6163, 6164, 6165, 6166, 6167, 6168, 6169, 6170, 6171, 6172,
+    6173, 6174, 6175, 6176, 6177, 6178, 6179, 6180, 6181, 6182, 6183, 6184, 6185,
+    6186, 6187, 6188, 6189, 6190, 6191, 6192, 6193, 6194, 6195, 6196, 6197, 6198,
+    6199, 6200, 6201, 6202, 6203, 6204, 6205, 6206, 6207, 6208, 6209, 6210, 6211,
+    6212, 6213, 6214, 6215, 6216, 6217, 6218, 6219, 6220, 6221, 6222, 6223, 6224,
+    6225, 6226, 6227, 6228, 6229, 6230, 6231, 6232, 6233, 6234, 6235, 6236, 6237,
+    6238, 6239, 6240, 6241, 6242, 6243, 6244, 6245, 6246, 6247, 6248, 6249, 6250,
+    6251, 6252, 6253, 6254, 6255, 6256, 6257, 6258, 6259, 6260, 6261, 6262, 6263,
+    6264, 6265, 6266, 6267, 6268, 6269, 6270, 6271, 6272, 6273, 6274, 6275, 6276,
+    6277, 6278, 6279, 6280, 6281, 6282, 6283, 6284, 6285, 6286, 6287, 6288, 6289,
+    6290, 6291, 6292, 6293, 6294, 6295, 6296, 6297, 6298, 6299, 6300, 6301, 6302,
+    6303, 6304, 6305, 6306, 6307, 6308, 6309, 6310, 6311, 6312, 6313, 6314, 6315,
+    6316, 6317, 6318, 6319, 6320, 6321, 6322, 6323, 6324, 6325, 6326, 6327, 6328,
+    6329, 6330, 6331, 6332, 6333, 6334, 6335, 6336, 6337, 6338, 6339, 6340, 6341,
+    6342, 6343, 6344, 6345, 6346, 6347, 6348, 6349, 6350, 6351, 6352, 6353, 6354,
+    6355, 6356, 6357, 6358, 6359, 6360, 6361, 6362, 6363, 6364, 6365, 6366, 6367,
+    6368, 6369, 6370, 6371, 6372, 6373, 6374, 6375, 6376, 6377, 6378, 6379, 6380,
+    6381, 6382, 6383, 6384, 6385, 6386, 6387, 6388, 6389, 6390, 6391, 6392, 6393,
+    6394, 6395, 6396, 6397, 6398, 6399, 6400, 6401, 6402, 6403, 6404, 6405, 6406,
+    6407, 6408, 6409, 6410, 6411, 6412, 6413, 6414, 6415, 6416, 6417, 6418, 6419,
+    6420, 6421, 6422, 6423, 6424, 6425, 6426, 6427, 6428, 6429, 6430, 6431, 6432,
+    6433, 6434, 6435, 6436, 6437, 6438, 6439, 6440, 6441, 6442, 6443, 6444, 6445,
+    6446, 6447, 6448, 6449, 6450, 6451, 6452, 6453, 6454, 6455, 6456, 6457, 6458,
+    6459, 6460, 6461, 6462, 6463, 6464, 6465, 6466, 6467, 6468, 6469, 6470, 6471,
+    6472, 6473, 6474, 6475, 6476, 6477, 6478, 6479, 6480, 6481, 6482, 6483, 6484,
+    6485, 6486, 6487, 6488, 6489, 6490, 6491, 6492, 6493, 6494, 6495, 6496, 6497,
+    6498, 6499, 6500, 6501, 6502, 6503, 6504, 6505, 6506, 6507, 6508, 6509, 6510,
+    6511, 6512, 6513, 6514, 6515, 6516, 6517, 6518, 6519, 6520, 6521, 6522, 6523,
+    6524, 6525, 6526, 6527, 6528, 6529, 6530, 6531, 6532, 6533, 6534, 6535, 6536,
+    6537, 6538, 6539, 6540, 6541, 6542, 6543, 6544, 6545, 6546, 6547, 6548, 6549,
+    6550, 6551, 6552, 6553, 6554, 6555, 6556, 6557, 6558, 6559, 6560, 6561, 6562,
+    6563, 6564, 6565, 6566, 6567, 6568, 6569, 6570, 6571, 6572, 6573, 6574, 6575,
+    6576, 6577, 6578, 6579, 6580, 6581, 6582, 6583, 6584, 6585, 6586, 6587, 6588,
+    6589, 6590, 6591, 6592, 6593, 6594, 6595, 6596, 6597, 6598, 6599, 6600, 6601,
+    6602, 6603, 6604, 6605, 6606, 6607, 6608, 6609, 6610, 6611, 6612, 6613, 6614,
+    6615, 6616, 6617, 6618, 6619, 6620, 6621, 6622, 6623, 6624, 6625, 6626, 6627,
+    6628, 6629, 6630, 6631, 6632, 6633, 6634, 6635, 6636, 6637, 6638, 6639, 6640,
+    6641, 6642, 6643, 6644, 6645, 6646, 6647, 6648, 6649, 6650, 6651, 6652, 6653,
+    6654, 6655, 6656, 6657, 6658, 6659, 6660, 6661, 6662, 6663, 6664, 6665, 6666,
+    6667, 6668, 6669, 6670, 6671, 6672, 6673, 6674, 6675, 6676, 6677, 6678, 6679,
+    6680, 6681, 6682, 6683, 6684, 6685, 6686, 6687, 6688, 6689, 6690, 6691, 6692,
+    6693, 6694, 6695, 6696, 6697, 6698, 6699, 6700, 6701, 6702, 6703, 6704, 6705,
+    6706, 6707, 6708, 6709, 6710, 6711, 6712, 6713, 6714, 6715, 6716, 6717, 6718,
+    6719, 6720, 6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6731,
+    6732, 6733, 6734, 6735, 6736, 6737, 6738, 6739, 6740, 6741, 6742, 6743, 6744,
+    6745, 6746, 6747, 6748, 6749, 6750, 6751, 6752, 6753, 6754, 6755, 6756, 6757,
+    6758, 6759, 6760, 6761, 6762, 6763, 6764, 6765, 6766, 6767, 6768, 6769, 6770,
+    6771, 6772, 6773, 6774, 6775, 6776, 6777, 6778, 6779, 6780, 6781, 6782, 6783,
+    6784, 6785, 6786, 6787, 6788, 6789, 6790, 6791, 6792, 6793, 6794, 6795, 6796,
+    6797, 6798, 6799, 6800, 6801, 6802, 6803, 6804, 6805, 6806, 6807, 6808, 6809,
+    6810, 6811, 6812, 6813, 6814, 6815, 6816, 6817, 6818, 6819, 6820, 6821, 6822,
+    6823, 6824, 6825, 6826, 6827, 6828, 6829, 6830, 6831, 6832, 6833, 6834, 6835,
+    6836, 6837, 6838, 6839, 6840, 6841, 6842, 6843, 6844, 6845, 6846, 6847, 6848,
+    6849, 6850, 6851, 6852, 6853, 6854, 6855, 6856, 6857, 6858, 6859, 6860, 6861,
+    6862, 6863, 6864, 6865, 6866, 6867, 6868, 6869, 6870, 6871, 6872, 6873, 6874,
+    6875, 6876, 6877, 6878, 6879, 6880, 6881, 6882, 6883, 6884, 6885, 6886, 6887,
+    6888, 6889, 6890, 6891, 6892, 6893, 6894, 6895, 6896, 6897, 6898, 6899, 6900,
+    6901, 6902, 6903, 6904, 6905, 6906, 6907, 6908, 6909, 6910, 6911, 6912, 6913,
+    6914, 6915, 6916, 6917, 6918, 6919, 6920, 6921, 6922, 6923, 6924, 6925, 6926,
+    6927, 6928, 6929, 6930, 6931, 6932, 6933, 6934, 6935, 6936, 6937, 6938, 6939,
+    6940, 6941, 6942, 6943, 6944, 6945, 6946, 6947, 6948, 6949, 6950, 6951, 6952,
+    6953, 6954, 6955, 6956, 6957, 6958, 6959, 6960, 6961, 6962, 6963, 6964, 6965,
+    6966, 6967, 6968, 6969, 6970, 6971, 6972, 6973, 6974, 6975, 6976, 6977, 6978,
+    6979, 6980, 6981, 6982, 6983, 6984, 6985, 6986, 6987, 6988, 6989, 6990, 6991,
+    6992, 6993, 6994, 6995, 6996, 6997, 6998, 6999, 7000
+][:1000]
+
+# Keep the built-in list sane: TCP ports are 1-65535, and duplicates only add
+# noise to progress counts and reports.
+TOP_PORTS = sorted({port for port in TOP_PORTS if 1 <= port <= 65535})
+
+# Top 100 subdomains for brute force
+SUBDOMAIN_WORDLIST = [
+    "www", "mail", "ftp", "localhost", "admin", "api", "blog", "test", "dev",
+    "shop", "news", "support", "mobile", "docs", "cdn", "status", "secure",
+    "demo", "webmail", "img", "media", "assets", "static", "portal", "staging",
+    "beta", "app", "login", "register", "api-v1", "api-v2", "v1", "v2", "v3",
+    "old", "new", "shop", "store", "pay", "payment", "checkout", "cart",
+    "account", "user", "users", "profile", "dashboard", "panel", "admin",
+    "administrator", "root", "system", "service", "services", "backend",
+    "internal", "private", "public", "external", "remote", "local", "proxy",
+    "cache", "db", "database", "sql", "mongo", "redis", "elastic", "search",
+    "es", "kafka", "rabbitmq", "queue", "worker", "cron", "job", "jobs",
+    "backup", "archive", "logs", "monitor", "grafana", "prometheus", "kibana",
+    "jenkins", "gitlab", "github", "git", "svn", "cvs", "repo", "repository",
+    "docker", "kubernetes", "k8s", "swarm", "nomad", "consul", "vault",
+    "smtp", "pop", "imap", "mx", "ns1", "ns2", "dns", "ntp", "ldap", "ad",
+    "exchange", "sharepoint", "teams", "slack", "discord", "chat", "irc",
+    "vpn", "ssl", "tls", "cert", "ca", "pki", "auth", "sso", "oauth",
+    "saml", "openid", "keycloak", "okta", "onelogin", "ldap", "radius"
+][:100]
+
+# User-Agent rotation
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15",
+]
+
+
+class ShadowRecon:
+    def __init__(self, target: str, threads: int = 50, timeout: int = 3,
+                 quiet: bool = False, verbose: bool = False, rate_limit: float = 0.1,
+                 proxy: Optional[str] = None):
+        self.target = target.lower().strip()
+        self.threads = threads
+        self.timeout = timeout
+        self.quiet = quiet
+        self.verbose = verbose
+        self.rate_limit = rate_limit
+        self.proxy = proxy
+        self.session = make_session(proxy=proxy)
+        self.results = {
+            "target": self.target,
+            "scan_time": datetime.now().isoformat(),
+            "subdomains": [],
+            "ports": {},
+            "technology": {},
+            "sensitive_files": {}
+        }
+        self.subdomains_found = set()
+        self.lock = threading.Lock()
+        self.requests_made = 0
+        self.last_request_time = 0
+
+    def _rate_limit_request(self):
+        """Rate limiting to avoid detection"""
+        if self.rate_limit > 0:
+            elapsed = time.time() - self.last_request_time
+            if elapsed < self.rate_limit:
+                time.sleep(self.rate_limit - elapsed)
+            self.last_request_time = time.time()
+
+    def _get_random_ua(self) -> str:
+        """Get random User-Agent"""
+        import random
+        return random.choice(USER_AGENTS)
+
+    def _print(self, message: str, level: str = "info"):
+        """Print colored messages to terminal"""
+        if self.quiet:
+            return
+
+        if level == "info":
+            print(f"{Colors.OKBLUE}[*]{Colors.ENDC} {message}")
+        elif level == "success":
+            print(f"{Colors.OKGREEN}[+]{Colors.ENDC} {message}")
+        elif level == "warning":
+            print(f"{Colors.WARNING}[!]{Colors.ENDC} {message}")
+        elif level == "error":
+            print(f"{Colors.FAIL}[-]{Colors.ENDC} {message}")
+        elif level == "header":
+            print(f"\n{Colors.HEADER}{Colors.BOLD}{message}{Colors.ENDC}")
+        elif level == "verbose" and self.verbose:
+            print(f"{Colors.OKCYAN}[~]{Colors.ENDC} {message}")
+
+    def _progress_bar(self, current: int, total: int, prefix: str = "Progress", length: int = 50):
+        """Print progress bar"""
+        if self.quiet:
+            return
+
+        filled = int(length * current // total)
+        bar = '█' * filled + '-' * (length - filled)
+        percent = f"{100 * current / total:.1f}%"
+        sys.stdout.write(f'\r{prefix} |{bar}| {percent} ({current}/{total})')
+        sys.stdout.flush()
+        if current == total:
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+
+    def enumerate_subdomains_crtsh(self) -> Set[str]:
+        """Enumerate subdomains using crt.sh Certificate Transparency logs"""
+        self._print("Querying crt.sh Certificate Transparency logs...", "verbose")
+        subdomains = set()
+
+        try:
+            self._rate_limit_request()
+            url = f"https://crt.sh/?q=%.{self.target}&output=json"
+            headers = {"User-Agent": self._get_random_ua()}
+
+            response = self.session.get(url, headers=headers, timeout=self.timeout, verify=False)
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    for entry in data:
+                        name = entry.get('name_value', '').strip()
+                        if name:
+                            subdomains.add(name.lower())
+                    self._print(f"Found {len(subdomains)} subdomains from crt.sh", "success")
+                except Exception as e:
+                    if self.verbose:
+                        self._print(f"Error parsing crt.sh response: {e}", "error")
+            else:
+                self._print(f"crt.sh returned status {response.status_code}", "warning")
+
+        except requests.exceptions.Timeout:
+            self._print("crt.sh query timed out", "warning")
+        except requests.exceptions.RequestException as e:
+            if self.verbose:
+                self._print(f"crt.sh query failed: {e}", "error")
+
+        return subdomains
+
+    def enumerate_subdomains_dns(self) -> Set[str]:
+        """Enumerate subdomains using DNS brute-force"""
+        self._print("Starting DNS brute-force enumeration...", "verbose")
+        subdomains = set()
+
+        def check_subdomain(subdomain: str) -> Optional[str]:
+            full_domain = f"{subdomain}.{self.target}"
+            try:
+                resolver = dns.resolver.Resolver()
+                resolver.timeout = self.timeout
+                resolver.lifetime = self.timeout
+                answers = resolver.resolve(full_domain, 'A')
+                if answers:
+                    return full_domain
+            except (dns.exception.DNSException, Exception):
+                pass
+            return None
+
+        total = len(SUBDOMAIN_WORDLIST)
+        checked = 0
+
+        with ThreadPoolExecutor(max_workers=self.threads) as executor:
+            futures = {executor.submit(check_subdomain, sub): sub for sub in SUBDOMAIN_WORDLIST}
+
+            for future in as_completed(futures):
+                checked += 1
+                if not self.quiet and checked % 10 == 0:
+                    self._progress_bar(checked, total, "DNS Brute-force")
+
+                result = future.result()
+                if result:
+                    subdomains.add(result)
+                    self._print(f"Found subdomain: {result}", "success")
+
+        if not self.quiet:
+            self._progress_bar(total, total, "DNS Brute-force")
+
+        self._print(f"DNS brute-force found {len(subdomains)} subdomains", "success")
+        return subdomains
+
+    def enumerate_subdomains(self):
+        """Run all subdomain enumeration methods and merge results"""
+        self._print("Starting subdomain enumeration", "header")
+
+        crtsh_results = self.enumerate_subdomains_crtsh()
+        dns_results = self.enumerate_subdomains_dns()
+
+        all_subdomains = crtsh_results.union(dns_results)
+        all_subdomains.add(self.target)
+
+        self.subdomains_found = all_subdomains
+        self.results["subdomains"] = sorted(list(all_subdomains))
+
+        self._print(f"\nTotal unique subdomains discovered: {len(all_subdomains)}", "success")
+        return all_subdomains
+
+    def scan_port(self, host: str, port: int) -> Optional[Dict]:
+        """Scan a single port and get banner if possible."""
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+
+            result = sock.connect_ex((host, port))
+
+            if result == 0:
+                service_info = {
+                    "port": port,
+                    "state": "open",
+                    "banner": None
+                }
+
+                # Only send HTTP probes to HTTP-like ports
+                http_like_ports = {80, 443, 8080, 8443, 8000, 8008, 8888, 9000}
+                if port in http_like_ports:
+                    try:
+                        sock.settimeout(1)
+                        sock.send(b'HEAD / HTTP/1.0\r\n\r\n')
+                        banner = sock.recv(1024).decode('utf-8', errors='ignore').strip()
+                        if banner:
+                            service_info["banner"] = banner[:500]
+                    except OSError:
+                        pass
+
+                return service_info
+
+        except OSError:
+            pass
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+        return None
+
+    def scan_ports_host(self, host: str) -> List[Dict]:
+        """Scan top 1000 ports on a single host"""
+        open_ports = []
+
+        with ThreadPoolExecutor(max_workers=self.threads) as executor:
+            futures = {executor.submit(self.scan_port, host, port): port for port in TOP_PORTS}
+
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    open_ports.append(result)
+
+        return open_ports
+
+    def scan_ports(self):
+        """Scan ports on all discovered subdomains"""
+        self._print("Starting port scanning", "header")
+
+        hosts_to_scan = list(self.subdomains_found)
+        total_hosts = len(hosts_to_scan)
+
+        for idx, host in enumerate(hosts_to_scan, 1):
+            if not self.quiet:
+                print(f"\n[{idx}/{total_hosts}] Scanning {host}...")
+
+            try:
+                open_ports = self.scan_ports_host(host)
+                if open_ports:
+                    self.results["ports"][host] = open_ports
+                    for port_info in open_ports:
+                        self._print(f"  {host}:{port_info['port']} - OPEN", "success")
+            except Exception as e:
+                if self.verbose:
+                    self._print(f"Error scanning {host}: {e}", "error")
+
+    def detect_technology(self, url: str) -> Dict:
+        """Detect technology stack from HTTP response"""
+        tech_info = {}
+
+        try:
+            self._rate_limit_request()
+            headers = {"User-Agent": self._get_random_ua()}
+            response = self.session.get(
+                url,
+                headers=headers,
+                timeout=self.timeout,
+                verify=False,
+                allow_redirects=True
+            )
+
+            tech_info = {
+                "url": url,
+                "status_code": response.status_code,
+                "server": None,
+                "frameworks": [],
+                "technologies": [],
+                "headers": dict(response.headers)
+            }
+
+            # Extract server header
+            if 'Server' in response.headers:
+                tech_info["server"] = response.headers['Server']
+            if 'X-Powered-By' in response.headers:
+                tech_info["technologies"].append(response.headers['X-Powered-By'])
+
+            # Framework detection from headers
+            frameworks = {
+                'X-Generator': 'Generator',
+                'X-Framework': 'Framework',
+                'X-Drupal-Cache': 'Drupal',
+                'X-Shopify-Stage': 'Shopify',
+                'X-Pingback': 'WordPress',
+                'X-Wix-Renderer-Server': 'Wix',
+                'X-ASP.NET-Version': 'ASP.NET',
+                'X-AspNet-Version': 'ASP.NET',
+                'X-AspNetMvc-Version': 'ASP.NET MVC'
+            }
+
+            for header, framework in frameworks.items():
+                if header in response.headers:
+                    tech_info["frameworks"].append(framework)
+
+            # Detect from cookies
+            if 'set-cookie' in response.headers:
+                cookies = response.headers['set-cookie'].lower()
+                if 'wordpress' in cookies:
+                    tech_info["frameworks"].append('WordPress')
+                if 'drupal' in cookies:
+                    tech_info["frameworks"].append('Drupal')
+                if 'laravel' in cookies:
+                    tech_info["frameworks"].append('Laravel')
+                if 'django' in cookies:
+                    tech_info["frameworks"].append('Django')
+
+        except requests.exceptions.RequestException:
+            pass
+        except Exception as e:
+            if self.verbose:
+                self._print(f"Error detecting technology for {url}: {e}", "error")
+
+        return tech_info
+
+    def check_sensitive_files(self, base_url: str) -> Dict:
+        """Check for sensitive files with content validation.
+
+        A lot of SPAs return 200 plus a "Page not found" HTML shell for every
+        unknown path. Treating status 200 as proof caused noisy false positives,
+        so each path now needs an expected signature.
+        """
+        sensitive_files = {
+            "robots.txt": "/robots.txt",
+            "sitemap.xml": "/sitemap.xml",
+            "git_head": "/.git/HEAD",
+            "env_file": "/.env",
+            "config_json": "/config.json",
+            "package_json": "/package.json",
+            "htaccess": "/.htaccess",
+            "htpasswd": "/.htpasswd",
+            "svn_entries": "/.svn/entries",
+            "ds_store": "/.DS_Store",
+            "phpinfo": "/phpinfo.php",
+            "admin": "/admin",
+            "wp_admin": "/wp-admin",
+            "wp_login": "/wp-login.php",
+            "adminer": "/adminer.php",
+            "phpmyadmin": "/phpmyadmin",
+        }
+
+        found_files = {}
+        baseline_text = ""
+        baseline_status = None
+        baseline_path = f"/__shadowrecon_missing_{int(time.time() * 1000)}"
+
+        try:
+            self._rate_limit_request()
+            baseline = self.session.get(
+                f"{base_url}{baseline_path}",
+                headers={"User-Agent": self._get_random_ua()},
+                timeout=self.timeout,
+                verify=False,
+                allow_redirects=False
+            )
+            baseline_status = baseline.status_code
+            baseline_text = baseline.text[:1000]
+        except requests.exceptions.RequestException:
+            pass
+
+        for name, path in sensitive_files.items():
+            try:
+                self._rate_limit_request()
+                url = f"{base_url}{path}"
+                headers = {"User-Agent": self._get_random_ua()}
+
+                response = self.session.get(
+                    url,
+                    headers=headers,
+                    timeout=self.timeout,
+                    verify=False,
+                    allow_redirects=False
+                )
+
+                if response.status_code == 200:
+                    content_length = len(response.content)
+                    text = response.text[:2000]
+                    content_type = response.headers.get("Content-Type", "")
+                    matched, reason = self._sensitive_file_signature(name, text, content_type)
+                    if baseline_status == 200 and self._looks_like_fallback_404(text, baseline_text):
+                        matched = False
+                        reason = "matched generic SPA/not-found response"
+                    if content_length > 0 and matched:
+                        found_files[name] = {
+                            "url": url,
+                            "status": response.status_code,
+                            "size": content_length,
+                            "content_type": content_type,
+                            "confidence": "high",
+                            "reason": reason,
+                            "snippet": response.text[:200]
+                        }
+                        self._print(f"  Found sensitive file: {path}", "warning")
+
+            except requests.exceptions.RequestException:
+                pass
+            except Exception as e:
+                if self.verbose:
+                    self._print(f"Error checking {path}: {e}", "error")
+
+        return found_files
+
+    def _looks_like_fallback_404(self, text: str, baseline_text: str) -> bool:
+        """Return True when a response looks like the site's generic 404 shell."""
+        lower = text.lower()
+        if "no route matches url" in lower or "page not found" in lower:
+            return True
+        if baseline_text and text[:500] == baseline_text[:500]:
+            return True
+        return False
+
+    def _sensitive_file_signature(self, name: str, text: str, content_type: str) -> Tuple[bool, str]:
+        """Require file-type-specific evidence before reporting a hit."""
+        lower = text.lower().lstrip()
+        is_html = "text/html" in content_type.lower() or lower.startswith("<!doctype") or lower.startswith("<html")
+        if is_html and name not in {"admin", "wp_admin", "wp_login", "adminer", "phpmyadmin"}:
+            return False, "html response is not a sensitive file"
+
+        if name == "robots.txt":
+            return "user-agent:" in lower, "robots.txt syntax"
+        if name == "sitemap.xml":
+            return "<urlset" in lower or "<sitemapindex" in lower, "sitemap XML syntax"
+        if name == "git_head":
+            return text.startswith("ref: refs/") or len(text.strip()) == 40, "git HEAD signature"
+        if name == "env_file":
+            env_markers = ("app_key=", "db_password=", "aws_secret_access_key", "secret_key=", "database_url=")
+            return any(marker in lower for marker in env_markers), "environment variable markers"
+        if name == "config_json":
+            return lower.startswith("{") and any(marker in lower for marker in ('"database"', '"api"', '"secret"', '"auth"')), "configuration JSON markers"
+        if name == "package_json":
+            return lower.startswith("{") and any(marker in lower for marker in ('"dependencies"', '"scripts"', '"devdependencies"')), "package.json markers"
+        if name in {"htaccess", "htpasswd"}:
+            return any(marker in lower for marker in ("rewriteengine", "authuserfile", "require valid-user", "$apr1$")), "Apache access-control markers"
+        if name == "svn_entries":
+            return lower.startswith("<?xml") or "dir\n" in lower[:200], "SVN entries markers"
+        if name == "ds_store":
+            return text.startswith("\x00\x00\x00\x01Bud1"), "DS_Store binary signature"
+        if name == "phpinfo":
+            return "phpinfo()" in lower or "<title>phpinfo" in lower, "phpinfo page markers"
+        if name in {"admin", "wp_admin", "wp_login", "adminer", "phpmyadmin"}:
+            admin_markers = ("wp-login", "phpmyadmin", "adminer", "password", "login")
+            return any(marker in lower for marker in admin_markers) and not self._looks_like_fallback_404(text, ""), "admin interface markers"
+        return False, "no known signature"
+
+    def run_technology_detection(self):
+        """Run technology detection on all discovered web services"""
+        self._print("Starting technology detection", "header")
+
+        web_services = []
+
+        for host, ports in self.results["ports"].items():
+            for port_info in ports:
+                port = port_info["port"]
+                if port in [80, 443, 8080, 8443, 8000, 8008, 8888, 9000, 9090]:
+                    protocol = "https" if port in [443, 8443] else "http"
+                    web_services.append(f"{protocol}://{host}:{port}")
+
+        # Also check base domain
+        web_services.insert(0, f"https://{self.target}")
+        web_services.insert(1, f"http://{self.target}")
+
+        for idx, url in enumerate(web_services):
+            if not self.quiet:
+                print(f"\n[{idx+1}/{len(web_services)}] Analyzing {url}...")
+
+            tech_info = self.detect_technology(url)
+            if tech_info.get("status_code"):
+                self.results["technology"][url] = tech_info
+
+                if tech_info.get("server"):
+                    self._print(f"  Server: {tech_info['server']}", "info")
+                if tech_info.get("frameworks"):
+                    self._print(f"  Frameworks: {', '.join(tech_info['frameworks'])}", "info")
+
+                # Check sensitive files for web services
+                sensitive = self.check_sensitive_files(url)
+                if sensitive:
+                    self.results["sensitive_files"][url] = sensitive
+
+    def save_results(self):
+        """Save results to JSON and text files"""
+        # Create recon directory if it doesn't exist
+        recon_dir = os.path.join(os.getcwd(), "recon")
+        os.makedirs(recon_dir, exist_ok=True)
+
+        # Save JSON results
+        json_file = os.path.join(recon_dir, f"{self.target}_recon.json")
+        with open(json_file, 'w') as f:
+            json.dump(self.results, f, indent=2)
+        self._print(f"\nJSON results saved to: {json_file}", "success")
+
+        # Save text summary
+        summary_file = os.path.join(recon_dir, f"{self.target}_summary.txt")
+        with open(summary_file, 'w') as f:
+            f.write(self._generate_text_summary())
+        self._print(f"Text summary saved to: {summary_file}", "success")
+
+    def _generate_text_summary(self) -> str:
+        """Generate human-readable text summary"""
+        summary = []
+        summary.append("=" * 80)
+        summary.append("SHADOWRECON - RECONNAISSANCE REPORT")
+        summary.append("=" * 80)
+        summary.append(f"Target: {self.target}")
+        summary.append(f"Scan Time: {self.results['scan_time']}")
+        summary.append(f"Version: {VERSION}")
+        summary.append("")
+
+        # Subdomains section
+        summary.append("-" * 80)
+        summary.append("DISCOVERED SUBDOMAINS")
+        summary.append("-" * 80)
+        for subdomain in self.results["subdomains"]:
+            summary.append(f"  {subdomain}")
+        summary.append(f"\nTotal: {len(self.results['subdomains'])} subdomains")
+        summary.append("")
+
+        # Ports section
+        summary.append("-" * 80)
+        summary.append("OPEN PORTS")
+        summary.append("-" * 80)
+        for host, ports in self.results["ports"].items():
+            summary.append(f"\n{host}:")
+            for port_info in ports:
+                banner = port_info.get("banner", "")
+                banner_str = f" - {banner[:80]}" if banner else ""
+                summary.append(f"  Port {port_info['port']}/tcp - OPEN{banner_str}")
+        summary.append("")
+
+        # Technology section
+        summary.append("-" * 80)
+        summary.append("TECHNOLOGY DETECTION")
+        summary.append("-" * 80)
+        for url, tech in self.results["technology"].items():
+            summary.append(f"\n{url}:")
+            summary.append(f"  Status: {tech.get('status_code', 'N/A')}")
+            if tech.get("server"):
+                summary.append(f"  Server: {tech['server']}")
+            if tech.get("frameworks"):
+                summary.append(f"  Frameworks: {', '.join(tech['frameworks'])}")
+            if tech.get("technologies"):
+                summary.append(f"  Technologies: {', '.join(tech['technologies'])}")
+        summary.append("")
+
+        # Sensitive files section
+        summary.append("-" * 80)
+        summary.append("SENSITIVE FILES FOUND")
+        summary.append("-" * 80)
+        for url, files in self.results["sensitive_files"].items():
+            summary.append(f"\n{url}:")
+            for name, info in files.items():
+                summary.append(f"  {name}: {info['url']} (Size: {info['size']} bytes)")
+        summary.append("")
+
+        summary.append("=" * 80)
+        summary.append("END OF REPORT")
+        summary.append("=" * 80)
+
+        return "\n".join(summary)
+
+    def run(self):
+        """Run the full reconnaissance scan"""
+        self._print("=" * 80, "header")
+        self._print(f"SHADOWRECON v{VERSION}", "header")
+        self._print(f"Target: {self.target}", "header")
+        self._print(f"Threads: {self.threads} | Timeout: {self.timeout}s", "header")
+        self._print("=" * 80, "header")
+
+        try:
+            # Phase 1: Subdomain enumeration
+            self.enumerate_subdomains()
+
+            # Phase 2: Port scanning
+            self.scan_ports()
+
+            # Phase 3: Technology detection
+            self.run_technology_detection()
+
+            # Save results
+            self.save_results()
+
+            # Print summary
+            self._print("\n" + "=" * 80, "header")
+            self._print("SCAN COMPLETE", "header")
+            self._print("=" * 80, "header")
+            self._print(f"Subdomains found: {len(self.results['subdomains'])}", "success")
+            self._print(f"Hosts with open ports: {len(self.results['ports'])}", "success")
+            self._print(f"Web services analyzed: {len(self.results['technology'])}", "success")
+            self._print(f"Sensitive files found: {sum(len(files) for files in self.results['sensitive_files'].values())}", "success")
+
+        except KeyboardInterrupt:
+            self._print("\n\nScan interrupted by user", "warning")
+            self.save_results()
+        except Exception as e:
+            self._print(f"\nError during scan: {e}", "error")
+            if self.verbose:
+                import traceback
+                traceback.print_exc()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="ShadowRecon - Comprehensive Reconnaissance Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python shadow_recon.py -t example.com
+  python shadow_recon.py -t example.com --threads 100 --verbose
+  python shadow_recon.py -t example.com --quiet
+        """
+    )
+
+    parser.add_argument(
+        "-t", "--target",
+        required=True,
+        help="Target domain to scan (e.g., example.com)"
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=50,
+        help="Number of threads for concurrent operations (default: 50)"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=3,
+        help="Connection timeout in seconds (default: 3)"
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0.1,
+        help="Rate limit between requests in seconds (default: 0.1)"
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress terminal output (only save files)"
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose output"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"ShadowRecon v{VERSION}"
+    )
+
+    add_proxy_arg(parser)
+
+    args = parser.parse_args()
+
+    # Validate target
+    if not args.target or '.' not in args.target:
+        print(f"{Colors.FAIL}Error: Invalid target domain{Colors.ENDC}")
+        sys.exit(1)
+
+    # Initialize and run scanner
+    scanner = ShadowRecon(
+        target=args.target,
+        threads=args.threads,
+        timeout=args.timeout,
+        quiet=args.quiet,
+        verbose=args.verbose,
+        rate_limit=args.rate_limit,
+        proxy=args.proxy
+    )
+
+    scanner.run()
+
+
+if __name__ == "__main__":
+    main()
